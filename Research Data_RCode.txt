@@ -1,0 +1,79 @@
+## Break point detection
+
+library("trend")
+
+pettitt.test(data_climate$val_permafrost)
+bu.test(data_climate$val_permafrost)
+br.test(data_climate$val_permafrost)
+
+## High-pass filter
+
+library(signal)
+
+# centralization
+centered_data <- data$data_raw - mean(data$data_raw)
+# set a high-pass filter
+{
+  cutoff_frequency <- 0.05 # range 0-0.5
+  filter_order <- 2 # range 2-10
+  high_pass_filter <- butter(filter_order, cutoff_frequency, type = "high")
+  filt_test <- filtfilt(high_pass_filter, centered_data)
+}
+
+## linear regression
+
+# R² and p value
+regression_slope_R2 <- function(data, start_year, end_year) {
+  reg <- lm(iWUEcor ~ Year, data = data %>% filter(Year >= start_year & Year <= end_year))
+  slope <- coef(reg)[2]
+  r2 <- summary(reg)$r.squared
+  p_value <- summary(reg)$coefficients[2, 4]
+  return(list(slope = round(slope, 3), r2 = round(r2, 3), p_value = round(p_value, 3)))
+}
+
+## moving correlation
+
+for (month in months) {
+  temp_monthly <- Data_MovCor_c %>%
+    filter(Month == month) %>%  
+    select(Year, Clim, iWUEcor) 
+  
+  temp_monthly <- temp_monthly %>% arrange(Year)
+  
+  cor_results[[month]] <- calc_sliding_cor(temp_monthly$iWUEcor, temp_monthly$Clim, window_size)
+}
+
+cor_results_df <- do.call(cbind, cor_results)
+colnames(cor_results_df) <- months
+
+start_year <- min(Data_MovCor_c$Year)
+end_year <- max(Data_MovCor_c$Year) - window_size + 1
+middle_years <- start_year:end_year + (window_size %/% 2)# calculate the middle years of moving correlation 
+
+cor_results_df_c <- data.frame(Year = middle_years, cor_results_df)
+
+print(cor_results_df_c)
+
+## Structural equation model
+
+library("nlme")
+library("lme4")
+library("piecewiseSEM")
+library("QuantPsyc")
+library("tidyverse")
+library("openxlsx")
+
+{
+  list1 <- list(
+    lm(PDSI ~ TEM + PRE , na.action = na.omit, data = data_SEM),
+    lm(BG ~ TEM, na.action = na.omit, data = data_SEM),
+    lm(N_Filt ~ PDSI + BG + TEM + PRE, na.action = na.omit, data = data_SEM),
+    lm(RWI ~ PDSI + BG + N_Filt+ TEM + PRE, na.action = na.omit, data = data_SEM)
+  )
+  DataSE.psem <- as.psem(list1)
+  (new.summary <- summary(DataSE.psem, progressBar = F))
+  plot(DataSE.psem)
+}
+
+basisSet(DataSE.psem)
+dSep(DataSE.psem,conditioning=T)
